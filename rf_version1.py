@@ -1,24 +1,27 @@
 # -*- coding: utf-8 -*-
 """
-Spyder Editor
+v0.1 sonntag nachmittag baseline
 
-This is a temporary script file.
 """
 
 # =========================================
 # Rectified Flow + DDPM++ U-Net on CelebA-64
 # =========================================
 
+import os
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 from torchvision import datasets, transforms
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
 import math
 import matplotlib.pyplot as plt
+from PIL import Image
 
+
+    
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
 
@@ -89,7 +92,35 @@ class Attention(nn.Module):
         out = out.reshape(b, c, h, w)
         return x + self.proj(out)
 
+# -----------------------------
+# 1. Simple UNet (minimal)
+# -----------------------------
 
+class SimpleUNet(nn.Module):
+    def __init__(self, in_channels=3, base=64):
+        super().__init__()
+        self.time_mlp = nn.Sequential(
+            nn.Linear(1, base),
+            nn.ReLU(),
+            nn.Linear(base, base)
+        )
+
+        self.conv1 = nn.Conv2d(in_channels, base, 3, padding=1)
+        self.conv2 = nn.Conv2d(base, base, 3, padding=1)
+        self.conv3 = nn.Conv2d(base, in_channels, 3, padding=1)
+        self.act = nn.ReLU()
+
+    def forward(self, x, t):
+        # t: (B,) → (B,1)
+        t = t.view(-1, 1)
+        t_embed = self.time_mlp(t).unsqueeze(-1).unsqueeze(-1)
+        h = self.act(self.conv1(x))
+        h = h + t_embed
+        h = self.act(self.conv2(h))
+        out = self.conv3(h)
+
+        return out
+    
 # =========================================
 # DDPM++ U-Net
 # =========================================
@@ -108,15 +139,17 @@ class UNetDDPM(nn.Module):
 
         self.init = nn.Conv2d(in_ch, base, 3, padding=1)
 
-        self.down1 = ResBlock(base, base * 2, time_dim)
-        self.down2 = ResBlock(base * 2, base * 4, time_dim)
+        # Down
+        self.down1 = ResBlock(base, base * 2, time_dim)      # 64 → 128
+        self.down2 = ResBlock(base * 2, base * 4, time_dim)  # 128 → 256
 
+        # Middle
+        self.mid = ResBlock(base * 4, base * 4, time_dim)    # 256 → 256
         self.attn_mid = Attention(base * 4)
 
-        self.mid = ResBlock(base * 4, base * 4, time_dim)
-
-        self.up1 = ResBlock(base * 4 + base * 2, base * 2, time_dim)
-        self.up2 = ResBlock(base * 2 + base, base, time_dim)
+        # Up (FIXED CHANNELS)
+        self.up1 = ResBlock(base * 8, base * 2, time_dim)    # (256+256)=512 → 128
+        self.up2 = ResBlock(base * 4, base, time_dim)        # (128+128)=256 → 64
 
         self.out = nn.Conv2d(base, in_ch, 1)
 
@@ -126,27 +159,28 @@ class UNetDDPM(nn.Module):
     def forward(self, x, t):
         t = self.time_embed(t)
 
-        x = self.init(x)
+        x = self.init(x)          # 64
 
-        x1 = self.down1(x, t)
+        x1 = self.down1(x, t)     # 128
         x1d = self.downsample(x1)
 
-        x2 = self.down2(x1d, t)
+        x2 = self.down2(x1d, t)   # 256
         x2d = self.downsample(x2)
 
         h = self.mid(x2d, t)
         h = self.attn_mid(h)
 
-        h = self.upsample(h)
-        h = torch.cat([h, x2], dim=1)
-        h = self.up1(h, t)
+        # Up 1
+        h = self.upsample(h)              # 256
+        h = torch.cat([h, x2], dim=1)     # 256+256=512
+        h = self.up1(h, t)                # → 128
 
-        h = self.upsample(h)
-        h = torch.cat([h, x1], dim=1)
-        h = self.up2(h, t)
+        # Up 2
+        h = self.upsample(h)              # 128
+        h = torch.cat([h, x1], dim=1)     # 128+128=256
+        h = self.up2(h, t)                # → 64
 
         return self.out(h)
-
 
 # =========================================
 # Rectified Flow
@@ -205,7 +239,7 @@ class Trainer:
                 loss = self.rf.train_step(x)
                 pbar.set_description(f"loss {loss:.4f}")
 
-            torch.save(self.rf.model.state_dict(), "rf_ddpmpp_celeba64.pth")
+            torch.save(self.rf.model.state_dict(), f"rf_ddpmpp_celeba64_{ep}.pth")
             self.show(ep)
 
     def show(self, ep):
@@ -225,26 +259,53 @@ class Trainer:
 # Dataset: CelebA-64
 # =========================================
 def get_celeba64():
+    return CelebA64("../data/celeba")
+
+# unused
+def get_online_celeba64():
+
     transform = transforms.Compose([
         transforms.Resize(64),        # key change
         transforms.CenterCrop(64),    # ensures exact 64x64
         transforms.ToTensor(),
         transforms.Normalize((0.5,), (0.5,))
+
     ])
 
-  #  return datasets.CelebA(
-    return datasets.DatasetFolder(
-        root="data/celeba",
-
-        loader=lambda x: __import__("PIL").Image.open(x).convert("RGB"),
-        extensions=("jpg", "png", "jpeg"),
-
-      #  root="data/celeba", # "./data"
-    #    split="train",
-     #   download=False,
+    return datasets.CelebA(
+        root="./data",
+        split="train",
+        download=True,
         transform=transform
+
     )
 
+
+class CelebA64(Dataset):
+    def __init__(self, root="data/celeba"):
+        self.root = root
+        self.files = [
+            os.path.join(root, f)
+            for f in os.listdir(root)
+            if f.endswith((".jpg", ".png", ".jpeg"))
+        ]
+
+        self.transform = transforms.Compose([
+            transforms.Resize(64),
+            transforms.CenterCrop(64),
+            transforms.ToTensor(),
+            transforms.Normalize((0.5,), (0.5,))
+        ])
+
+    def __len__(self):
+        return len(self.files)
+
+    def __getitem__(self, idx):
+        img = Image.open(self.files[idx]).convert("RGB")
+        img = self.transform(img)
+        return img, 0   # dummy label (unused)
+    
+    
 
 # =========================================
 # Main
@@ -253,11 +314,13 @@ def main():
     dataset = get_celeba64()
     loader = DataLoader(dataset, batch_size=64, shuffle=True, num_workers=4)
 
-    model = UNetDDPM()
+    model = SimpleUNet().to(device)
+#    model = UNetDDPM().to(device)
     rf = RectifiedFlow(model)
 
+    print("trainer runs..")
     trainer = Trainer(rf, loader)
-    trainer.train(epochs=10)
+    trainer.train(epochs=5)
 
 
 if __name__ == "__main__":

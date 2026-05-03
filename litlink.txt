@@ -1,0 +1,6 @@
+Sun May  3 15:23:03 CEST 2026
+2026-05-03T15 https:/ https://hunterheidenreich.com/notes/machine-learning/generative-models/rectified-flow/
+2026-05-03T15 various https://iclr.cc/virtual/2023/oral/12626
+2026-05-03T15 various https://medium.com/@kdk199604/rectified-flow-scalable-generative-modeling-via-neural-ode-transport-cef66b710b2a
+2026-05-03T16 various https://medium.com/@kdk199604/rectified-flow-scalable-generative-modeling-via-neural-ode-transport-cef66b710b2a
+2026-05-03T16 various https://chatgpt.com/share/69f75d6f-1cf4-83eb-8299-102473eed247

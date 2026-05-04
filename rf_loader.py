@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-v0.13 sonntag abend baseline
+v0.1 montag abend baseline tool
 
 """
 
@@ -8,7 +8,8 @@ v0.13 sonntag abend baseline
 # Rectified Flow + DDPM++ U-Net on CelebA-64
 # =========================================
 
-import os
+import os,sys,math
+import pathlib
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -16,13 +17,13 @@ import torch.optim as optim
 from torchvision import datasets, transforms
 from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
-import math
 import matplotlib.pyplot as plt
 from PIL import Image
 from torchvision.utils import save_image
+import glob
 
+import torchvision.utils as vutils
 
-    
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
 
@@ -240,36 +241,13 @@ class RectifiedFlow:
     
         x1_hat = x
         return x0, x1_hat
-    
-    
-    def train_step_reflow(self, x1_real):
-        """
-        One reflow step:
-        - ignore real x1
-        - generate improved x1_hat
-        """
-        B = x1_real.size(0)
-        x0 = torch.randn_like(x1_real)
-    
-        # generate better pairing
-        x0, x1_hat = self.generate_pairs(x0)
-    
-        # sample time
-        t = torch.rand(B, device=device)
-        t_ = t[:, None, None, None]
-    
-        xt = (1 - t_) * x0 + t_ * x1_hat
-        v_target = x1_hat - x0
-    
-        v_pred = self.model(xt, t)
-    
-        loss = ((v_pred - v_target) ** 2).mean()
-    
-        self.opt.zero_grad()
-        loss.backward()
-        self.opt.step()
-    
-        return loss.item()
+
+    def makeonestep(self,x):
+        self.model.eval()
+        t0 = torch.zeros(16, device=device)         
+        v = self.model(x,t0)
+        return x+v
+
 
 
 # =========================================
@@ -323,12 +301,11 @@ class Trainer:
         # create output folder
         self.save(ep, 'ALL')
 
-    
-    
+
     def save(self, ep,reflow_text = ''):
         imgs = self.rf.sample(16)
         imgs = (imgs.clamp(-1, 1) + 1) / 2  # [-1,1] → [0,1]
-        
+
         save_dir = f"samples_{ep}{reflow_text}"
         os.makedirs(save_dir, exist_ok=True)
         # save images
@@ -337,6 +314,34 @@ class Trainer:
             save_image(imgs[i], filename)
 
 
+    def train_step_reflow(self, x1_real):
+        """
+        One reflow step:
+        - ignore real x1
+        - generate improved x1_hat
+        """
+        B = x1_real.size(0)
+        x0 = torch.randn_like(x1_real)
+    
+        # generate better pairing
+        x0, x1_hat = self.generate_pairs(x0)
+    
+        # sample time
+        t = torch.rand(B, device=device)
+        t_ = t[:, None, None, None]
+    
+        xt = (1 - t_) * x0 + t_ * x1_hat
+        v_target = x1_hat - x0
+    
+        v_pred = self.model(xt, t)
+    
+        loss = ((v_pred - v_target) ** 2).mean()
+    
+        self.opt.zero_grad()
+        loss.backward()
+        self.opt.step()
+    
+        return loss.item()
   
 
 # =========================================
@@ -388,12 +393,65 @@ class CelebA64(Dataset):
         img = Image.open(self.files[idx]).convert("RGB")
         img = self.transform(img)
         return img, 0   # dummy label (unused)
-    
+
+### NEW PART
+from torch_fidelity import calculate_metrics
+
+metrics = print(
+"""
+    input1="real_images/",
+    input2="out_images/",
+    fid=True,
+    cuda=False
+"""
+)
+def calc_image(afn):
+    pass
+
+
+def load_images(aloimgs):
+
+    print(aloimgs)
+    for _ in range (0,math.ceil(16/len(aloimgs))):
+        aloimgs.extend(aloimgs)
+
+
+    image_paths=aloimgs[:16]
+    # take first 16 images
+    image_size = 64
+
+    # --- preprocessing ---
+
+    transform = transforms.Compose([
+    transforms.Resize((image_size, image_size)),
+    transforms.ToTensor()
+# converts to (C, H, W) and scales to [0,1]
+])
+
+# --- load images ---
+
+    images = []
+
+    for path in image_paths:
+
+        print(f"loading {path}")
+        img = Image.open(path).convert("RGB")  # ensure 3 channels
+        img = transform(img)                  # (3, 32, 32)
+        images.append(img)
+
+    # --- stack in  to batch ---
+    x = torch.stack(images)  # shape: (16, 3, 32, 32)
+
+    print(x.shape)
+    return x
+
 
 # =========================================
 # Main
 # =========================================
-def main():
+
+
+def main(amodel,alist_files):
     dataset = get_celeba64()
     loader = DataLoader(dataset, batch_size=64, shuffle=True, num_workers=4)
 
@@ -401,13 +459,38 @@ def main():
 #    model = UNetDDPM().to(device)
     rf = RectifiedFlow(model)
 
-    print("trainer runs..")
-    trainer = Trainer(rf, loader)
-    trainer.train(epochs=3)
+    ckpt = torch.load(amodel)
+    rf.model.load_state_dict(ckpt)
+    print(f"Model {amodel} has been loaded")
+    rf.model.eval()
+
+    try:
+        x=load_images(alist_files)
+        save_dir = pathlib.Path(f"samples_onestep{os.getpid()}")
+        os.makedirs(save_dir, exist_ok=True)
+
+    except IOError as e:
+        print(e)
+        exit(1)
 
 
+    y = rf.makeonestep(x)
+    for fname in alist_files:
+         for i in range(y.size(0)):
+            vutils.save_image(y[i],save_dir/ f"img_{i}.png")
+
+print("*")
 if __name__ == "__main__":
-    main()
-    
+    if('SPY_EXTERNAL_INTERPRETER' in os.environ):
+        filename='rf_ddpmpp_celeba64_0R0_first.pth'
+        main(filename)
+    else:    
+
+        assert len(sys.argv)>1 
+
+        args=list(sys.argv[2:])
+        print(args)
+        main(sys.argv[1],args)
+
 
 

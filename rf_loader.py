@@ -2,6 +2,9 @@
 """
 v0.1 montag abend baseline tool
 
+ladet ein rf model
+berechnet in einem schritt aus einem bild ein zielbild
+
 """
 
 # =========================================
@@ -483,7 +486,9 @@ print("*")
 if __name__ == "__main__":
     if('SPY_EXTERNAL_INTERPRETER' in os.environ):
         filename='rf_ddpmpp_celeba64_0R0_first.pth'
-        main(filename)
+
+        img_list=[] # enter images here
+        main(filename,img_list)
     else:    
 
         assert len(sys.argv)>1 

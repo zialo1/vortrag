@@ -460,6 +460,7 @@ def main(amodel,alist_files):
 
     model = SimpleUNet().to(device)
 #    model = UNetDDPM().to(device)
+# nice but takes too long. 
     rf = RectifiedFlow(model)
 
     ckpt = torch.load(amodel)

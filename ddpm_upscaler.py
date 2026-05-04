@@ -2,6 +2,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 '''
+untested bare from chatgpt
+
 version 0.1 monday evening:
 takes 64x64 images and upscales them to 128x128.
 the training data is half from CELEBA-64 and half

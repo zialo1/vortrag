@@ -1,0 +1,14 @@
+subsection: "Hilfsmittel"
+
+for the editing the report and for structuring we used antigravity, for typesetting overleaf. 
+for describing of the compute environment in section a we used antigravity . 
+for code delevopment we also used chatgpt and antigravity. 
+antigravity and notebook llm were used to generate text in all chapters.
+
+
+
+
+parameter
+
+
+appendix C: "Comparing outputs of the CelebA64 evaluation"
